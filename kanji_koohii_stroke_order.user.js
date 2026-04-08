@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kanji Koohii – Stroke Order (KanjiVG)
 // @namespace    https://kanji.koohii.com/
-// @version      1.0.0
+// @version      2.0.0
 // @description  Shows stroke order diagrams on Kanji Koohii using KanjiVG
 // @author       sebastian-baier
 // @homepageURL  https://github.com/sebastian-baier/kanji-koohii-stroke-order
@@ -31,6 +31,16 @@
   ]
   const POLL_INTERVAL_MS = 200
   const POLL_MAX_ATTEMPTS = 20
+
+  // ─── Page detection ───────────────────────────────────────────────────────
+
+  function isReviewPage () {
+    return window.location.pathname.startsWith('/review')
+  }
+
+  function isStudyPage () {
+    return window.location.pathname.startsWith('/study/kanji')
+  }
 
   // ─── Unicode helpers ──────────────────────────────────────────────────────
 
@@ -137,10 +147,11 @@
 
   // ─── Injection ────────────────────────────────────────────────────────────
 
-  async function injectStrokeOrderSection (kanjiChars, anchorElement) {
-    const alreadyInjected = document.querySelector('.kko-stroke-section')
-    if (alreadyInjected) return
+  function removeExistingStrokeSection () {
+    document.querySelector('.kko-stroke-section')?.remove()
+  }
 
+  async function injectStrokeOrderSection (kanjiChars, anchorElement) {
     const { section, row } = buildStrokeSection()
     anchorElement.insertAdjacentElement('afterend', section)
 
@@ -158,20 +169,113 @@
     }
   }
 
-  function tryFindAndInject () {
-    // Koohii renders the kanji inside: div.kanji > span.cj-k
+  // ─── Study page ───────────────────────────────────────────────────────────
+
+  // Kanji is inside: div.kanji > span.cj-k
+  // Anchor: .rtkframe = panel with frame number, kanji, and readings
+
+  function tryInjectOnStudyPage () {
     const kanjiSpan = document.querySelector('.kanji .cj-k, .kanji span[lang="ja"]')
     if (!kanjiSpan) return false
 
     const kanjiChars = [...kanjiSpan.textContent.trim()].filter(isKanjiChar)
     if (!kanjiChars.length) return false
 
-    // Anchor: .rtkframe = the panel containing frame number, kanji, and readings
     const studyFrame = kanjiSpan.closest('.rtkframe')
     if (!studyFrame) return false
 
     injectStrokeOrderSection(kanjiChars, studyFrame)
     return true
+  }
+
+  function initStudyPage () {
+    if (!tryInjectOnStudyPage()) {
+      let attempts = 0
+      const poller = setInterval(() => {
+        const success = tryInjectOnStudyPage()
+        const tooManyTries = ++attempts >= POLL_MAX_ATTEMPTS
+        if (success || tooManyTries) clearInterval(poller)
+      }, POLL_INTERVAL_MS)
+    }
+  }
+
+  // ─── Review page ──────────────────────────────────────────────────────────
+
+  // The flashcard flips by toggling between uiFcState-0 (unflipped) and
+  // uiFcState-1 (flipped). We watch the card element for class changes and
+  // inject the stroke order diagram only after the card is flipped.
+  // When the next card loads, we remove the old diagram and start watching again.
+
+  function getFlashcardKanjiChars (flashcard) {
+    const kanjiSpan = flashcard.querySelector('.cj-k span, span[lang="ja"] span')
+    if (!kanjiSpan) return []
+    return [...kanjiSpan.textContent.trim()].filter(isKanjiChar)
+  }
+
+  function isCardFlipped (flashcard) {
+    return flashcard.classList.contains('uiFcState-1')
+  }
+
+  function watchCardForFlip (flashcard) {
+    const observer = new MutationObserver(() => {
+      if (!isCardFlipped(flashcard)) return
+
+      // Card was just flipped — remove any previous diagram and inject new one
+      removeExistingStrokeSection()
+
+      const kanjiChars = getFlashcardKanjiChars(flashcard)
+      if (!kanjiChars.length) return
+
+      // Anchor: inject after the flashcard itself
+      injectStrokeOrderSection(kanjiChars, flashcard)
+
+      // Stop watching this card — the next card will get its own observer
+      observer.disconnect()
+
+      // Watch for the next card to appear and set up a new observer for it
+      watchForNextCard()
+    })
+
+    observer.observe(flashcard, { attributes: true, attributeFilter: ['class'] })
+  }
+
+  function watchForNextCard () {
+    // After answering, Koohii replaces the flashcard element via Vue.
+    // We watch the parent container until a new .uiFcCard appears.
+    const reviewContainer = document.querySelector('#uiFcMain')
+    if (!reviewContainer) return
+
+    const observer = new MutationObserver(() => {
+      const nextCard = reviewContainer.querySelector('.uiFcCard')
+      if (!nextCard) return
+
+      observer.disconnect()
+      watchCardForFlip(nextCard)
+    })
+
+    observer.observe(reviewContainer, { childList: true, subtree: true })
+  }
+
+  function initReviewPage () {
+    let attempts = 0
+    const poller = setInterval(() => {
+      const flashcard = document.querySelector('.uiFcCard')
+
+      if (flashcard) {
+        clearInterval(poller)
+
+        // If the card is already flipped on load, inject immediately
+        if (isCardFlipped(flashcard)) {
+          const kanjiChars = getFlashcardKanjiChars(flashcard)
+          if (kanjiChars.length) injectStrokeOrderSection(kanjiChars, flashcard)
+          watchForNextCard()
+        } else {
+          watchCardForFlip(flashcard)
+        }
+      }
+
+      if (++attempts >= POLL_MAX_ATTEMPTS) clearInterval(poller)
+    }, POLL_INTERVAL_MS)
   }
 
   // ─── Styles ───────────────────────────────────────────────────────────────
@@ -231,15 +335,10 @@
   function init () {
     injectStyles()
 
-    // Koohii uses Vue — the DOM may not be ready right after DOMContentLoaded,
-    // so we poll until the kanji element appears.
-    if (!tryFindAndInject()) {
-      let attempts = 0
-      const poller = setInterval(() => {
-        const success = tryFindAndInject()
-        const tooManyTries = ++attempts >= POLL_MAX_ATTEMPTS
-        if (success || tooManyTries) clearInterval(poller)
-      }, POLL_INTERVAL_MS)
+    if (isReviewPage()) {
+      initReviewPage()
+    } else if (isStudyPage()) {
+      initStudyPage()
     }
   }
 
