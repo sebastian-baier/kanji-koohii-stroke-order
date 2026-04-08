@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kanji Koohii – Stroke Order (KanjiVG)
 // @namespace    https://kanji.koohii.com/
-// @version      2.0.0
+// @version      2.0.1
 // @description  Shows stroke order diagrams on Kanji Koohii using KanjiVG
 // @author       sebastian-baier
 // @homepageURL  https://github.com/sebastian-baier/kanji-koohii-stroke-order
