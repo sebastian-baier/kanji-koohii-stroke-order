@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kanji Koohii – Stroke Order (KanjiVG)
 // @namespace    https://kanji.koohii.com/
-// @version      2.0.1
+// @version      2.0.2
 // @description  Shows stroke order diagrams on Kanji Koohii using KanjiVG
 // @author       sebastian-baier
 // @homepageURL  https://github.com/sebastian-baier/kanji-koohii-stroke-order
@@ -77,13 +77,40 @@
     return new DOMParser().parseFromString(svgText, 'image/svg+xml').querySelector('svg')
   }
 
+  function addArrowMarkers (svgElement) {
+    const defs = svgElement.querySelector('defs') || svgElement.insertBefore(
+      document.createElementNS('http://www.w3.org/2000/svg', 'defs'),
+      svgElement.firstChild
+    )
+
+    STROKE_COLORS.forEach((color, index) => {
+      const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
+      marker.setAttribute('id', `kko-arrow-${index}`)
+      marker.setAttribute('markerWidth', '6')
+      marker.setAttribute('markerHeight', '6')
+      marker.setAttribute('refX', '3')
+      marker.setAttribute('refY', '3')
+      marker.setAttribute('orient', 'auto')
+
+      const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      arrowPath.setAttribute('d', 'M0,0 L0,6 L6,3 z')
+      arrowPath.setAttribute('fill', color)
+      marker.appendChild(arrowPath)
+      defs.appendChild(marker)
+    })
+  }
+
   function colorizeStrokes (svgElement) {
+    addArrowMarkers(svgElement)
+
     const strokePaths = [...svgElement.querySelectorAll('path')]
 
     strokePaths.forEach((path, index) => {
-      path.setAttribute('stroke', STROKE_COLORS[index % STROKE_COLORS.length])
+      const colorIndex = index % STROKE_COLORS.length
+      path.setAttribute('stroke', STROKE_COLORS[colorIndex])
       path.setAttribute('stroke-width', '3')
       path.setAttribute('fill', 'none')
+      path.setAttribute('marker-end', `url(#kko-arrow-${colorIndex})`)
     })
 
     return strokePaths.length
@@ -202,9 +229,10 @@
   // ─── Review page ──────────────────────────────────────────────────────────
 
   // The flashcard flips by toggling between uiFcState-0 (unflipped) and
-  // uiFcState-1 (flipped). We watch the card element for class changes and
-  // inject the stroke order diagram only after the card is flipped.
-  // When the next card loads, we remove the old diagram and start watching again.
+  // uiFcState-1 (flipped). Vue may update the card in place or replace the
+  // element entirely, so we use a single persistent observer on #uiFcMain
+  // that reacts to any attribute or DOM change. We track the last kanji we
+  // injected so we never inject the same one twice in a row.
 
   function getFlashcardKanjiChars (flashcard) {
     // Use .d-kanji to avoid picking up 画数 from the stroke count label
@@ -217,65 +245,43 @@
     return flashcard.classList.contains('uiFcState-1')
   }
 
-  function watchCardForFlip (flashcard) {
-    const observer = new MutationObserver(() => {
-      if (!isCardFlipped(flashcard)) return
-
-      // Card was just flipped — remove any previous diagram and inject new one
-      removeExistingStrokeSection()
-
-      const kanjiChars = getFlashcardKanjiChars(flashcard)
-      if (!kanjiChars.length) return
-
-      // Anchor: inject after the flashcard itself
-      injectStrokeOrderSection(kanjiChars, flashcard)
-
-      // Stop watching this card — the next card will get its own observer
-      observer.disconnect()
-
-      // Watch for the next card to appear and set up a new observer for it
-      watchForNextCard()
-    })
-
-    observer.observe(flashcard, { attributes: true, attributeFilter: ['class'] })
-  }
-
-  function watchForNextCard () {
-    // After answering, Koohii replaces the flashcard element via Vue.
-    // We watch the parent container until a new .uiFcCard appears.
-    const reviewContainer = document.querySelector('#uiFcMain')
-    if (!reviewContainer) return
-
-    const observer = new MutationObserver(() => {
-      const nextCard = reviewContainer.querySelector('.uiFcCard')
-      if (!nextCard) return
-
-      observer.disconnect()
-      watchCardForFlip(nextCard)
-    })
-
-    observer.observe(reviewContainer, { childList: true, subtree: true })
-  }
-
   function initReviewPage () {
     let attempts = 0
     const poller = setInterval(() => {
-      const flashcard = document.querySelector('.uiFcCard')
-
-      if (flashcard) {
-        clearInterval(poller)
-
-        // If the card is already flipped on load, inject immediately
-        if (isCardFlipped(flashcard)) {
-          const kanjiChars = getFlashcardKanjiChars(flashcard)
-          if (kanjiChars.length) injectStrokeOrderSection(kanjiChars, flashcard)
-          watchForNextCard()
-        } else {
-          watchCardForFlip(flashcard)
-        }
+      const reviewContainer = document.querySelector('#uiFcMain')
+      if (!reviewContainer) {
+        if (++attempts >= POLL_MAX_ATTEMPTS) clearInterval(poller)
+        return
       }
 
-      if (++attempts >= POLL_MAX_ATTEMPTS) clearInterval(poller)
+      clearInterval(poller)
+
+      let lastInjectedKanji = null
+
+      const observer = new MutationObserver(() => {
+        const flashcard = reviewContainer.querySelector('.uiFcCard')
+        if (!flashcard || !isCardFlipped(flashcard)) return
+
+        const kanjiChars = getFlashcardKanjiChars(flashcard)
+        if (!kanjiChars.length) return
+
+        const currentKanji = kanjiChars.join('')
+
+        // Skip if we already injected for this exact kanji
+        if (currentKanji === lastInjectedKanji) return
+
+        lastInjectedKanji = currentKanji
+        removeExistingStrokeSection()
+        injectStrokeOrderSection(kanjiChars, flashcard)
+      })
+
+      // Watch for class changes (flip) and DOM changes (new card) in one observer
+      observer.observe(reviewContainer, {
+        attributes: true,
+        attributeFilter: ['class'],
+        childList: true,
+        subtree: true
+      })
     }, POLL_INTERVAL_MS)
   }
 
