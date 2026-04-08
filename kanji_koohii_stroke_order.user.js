@@ -4,8 +4,8 @@
 // @version      1.0.0
 // @description  Shows stroke order diagrams on Kanji Koohii using KanjiVG
 // @author       sebastian-baier
-// @homepageURL  https://gist.github.com/sebastian-baier/ce21941a62e97fe66c8c88a20f20a4be
-// @downloadURL  https://gist.github.com/sebastian-baier/ce21941a62e97fe66c8c88a20f20a4be/raw/kanji_koohii_stroke_order.user.js
+// @homepageURL  https://github.com/sebastian-baier/kanji-koohii-stroke-order
+// @downloadURL  https://raw.githubusercontent.com/sebastian-baier/kanji-koohii-stroke-order/main/kanji_koohii_stroke_order.user.js
 // @include      http://kanji.koohii.com/study/kanji/*
 // @include      https://kanji.koohii.com/study/kanji/*
 // @include      http://kanji.koohii.com/review*
