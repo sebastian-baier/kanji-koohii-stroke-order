@@ -207,7 +207,8 @@
   // When the next card loads, we remove the old diagram and start watching again.
 
   function getFlashcardKanjiChars (flashcard) {
-    const kanjiSpan = flashcard.querySelector('.cj-k span, span[lang="ja"] span')
+    // Use .d-kanji to avoid picking up 画数 from the stroke count label
+    const kanjiSpan = flashcard.querySelector('.d-kanji .cj-k span')
     if (!kanjiSpan) return []
     return [...kanjiSpan.textContent.trim()].filter(isKanjiChar)
   }
